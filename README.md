@@ -36,6 +36,7 @@ To read more on when and how to submit an RFC document, see RFC 1.
 * [RFC 1021 - Mutation rewrites](./text/1021-rewrites.rst) (accepted)
 * [RFC 1023 - Adding Splats Syntax](./text/1023-splats.rst) (accepted)
 * [RFC 1025 - Database Branches](./text/1025-branches.rst) (accepted)
+* [RFC 1028 - CLI hooks](./text/1028-cli-hooks.rst) (accepted)
 
 ## License
 

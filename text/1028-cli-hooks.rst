@@ -64,8 +64,8 @@ indicate which commands will trigger the hooks. The exception to that is the
 of schema change, regardless of which command causes it.
 
 All hooks will use the project root directory as the execution directory.
-Hooks are executed using ``/bin/sh`` on all platforms. On Windows, the hooks
-are always executed in WSL.
+Hooks are executed using ``/bin/sh`` on Unix-like platforms and ``cmd.exe``
+on Windows.
 
 If the shell exits with a non-zero status code, the CLI will exit immediately,
 without executing any subsequent hooks or CLI actions.
@@ -248,8 +248,8 @@ The values corresponding to the keys are strings that are going to be executed
 as shell commands, much like for the hooks.
 
 All watch scripts will use the project root directory as the execution
-directory. They are executed using ``/bin/sh`` on all platforms. On Windows,
-the scripts are always executed in WSL.
+directory. They are executed using ``/bin/sh`` on Unix-like platforms and 
+using ``cmd.exe`` on Windows.
 
 An example of this configuration::
 
