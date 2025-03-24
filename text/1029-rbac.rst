@@ -1,0 +1,152 @@
+::
+
+    Status: Draft
+    Type: Feature
+    Created: 2025-03-24
+    Authors: Aljaž Mur Eržen <aljaz@edgedb.com>
+
+===================================
+RFC 1029: Role Based Access Control
+===================================
+
+This RFC discusses expansion of roles and capatibilities that are
+used to limit the access to a database based on provided connection
+credentials.
+
+
+Motivation
+==========
+
+Existing roles work on "all or nothing" principle: there is no way to
+grant a user a read-only access to the database, or even an access that
+would prevent DDL.
+
+Additionally, it would be useful to provide access control for each schema
+object, such that certain schema objects could be hidden or made read-only,
+but only for certain roles.
+
+Roles or (or any other RBAC objects) must not be part of the schema, because
+different deployments of the same application should be able to configure
+different access control. Also, schema should never depend on any roles
+(or other non-schema objects), since that would prevent applying such schema to
+a fresh instance, which would break dump/restore workflow. 
+
+
+Current state
+=============
+
+Currently, Gel supports creation and modification of roles. Each role has a name
+and optionally a password. When connecting to an instance, role name is
+specified as the username.
+
+In addition, when executing EdgeQL queries, users can specify which of the
+following capabilities are allowed to be used by the query: 
+
+- ``MODIFICATIONS``: whether INSERT/UPDATE/DELETE statements are allowed,
+- ``DDL``: whether CREATE/ALTER/DROP commands are allowed,
+- ``TRANSACTION``: whether transaction commands are allowed,
+- ``SESSION_CONFIG``: whether access to SET SESSION is allowed,
+- ``PERSISTENT_CONFIG``: whether SET INSTANCE/CURRENT BRANCH is allowed.
+
+These capabilities are expressed as bit flags in ``Parse`` and ``Execute``
+messages. Language bindings are supposed to set only ``MODIFICATIONS`` and
+``DDL`` by default for queries executed by user code.
+Gel CLI sets all capabilities.
+
+Connection role does not affect allowed capabilities.
+
+
+Proposal
+========
+
+
+Capabilities
+------------
+
+Each role is assigned a set of allowed capabilities from the list of existing
+capabilities above.
+
+When executing a query, the server computes the intersection of the current
+role's allowed capabilities and explicitly specified capabilities in the
+``Parse`` or ``Execute`` messages. If compiled query requires a capability that
+is not in the intersection, the query is rejected.
+
+To set ``capabilities`` of a role, ``SET`` command can be used with a
+comma-separated list of capability names.
+
+Syntax example::
+
+    CREATE ROLE my_role {
+        SET capabilities := 'MODIFICATIONS,DDL';
+    };
+
+When new instances are created, the initial user has all capabilities assigned
+by default.
+When creating a new role, no capabilities are assigned.
+
+In addition to the capabilities listed above, the following aliases are allowed:
+
+- ``ALL`` is normalized into all possible capabilities,
+- ``CLI`` is normalized into ``TRANSACTION,SESSION_CONFIG,PERSISTENT_CONFIG``.
+
+
+Per-object access control
+-------------------------
+
+We introduce a new function, ``sys::get_current_role()`` that returns the role
+of the current connection.
+
+It returns a ``str`` that can be used in any expression.
+
+In combination with access policies, this allows precise control over which
+objects of an object type are visible or can be modified by each role.
+
+For example::
+
+    CREATE TYPE Secret {
+        CREATE PROPERTY super_secret: str;
+
+        CREATE ACCESS POLICY allow_admin
+            ALLOW ALL
+            USING (sys::get_current_role() = 'admin');
+
+        CREATE ACCESS POLICY allow_warehouse
+            ALLOW SELECT
+            USING (sys::get_current_role() = 'warehouse_exporter');
+
+        CREATE ACCESS POLICY allow_inserts
+            ALLOW INSERT;
+    };
+
+
+.. access policies that return an error when an object is accessed?
+
+.. access policies for functions such as sys::reset_query_stats?
+
+
+Rejected Ideas
+==============
+
+User-defined capabilities
+-------------------------
+
+Each role has a set of capabilities, which can be arbitrary strings in
+addition to all of the existing capabilities listed above.
+
+Each schema object can be annotated by a list of required capabilities.
+
+To execute a query, the role has to have all of required capabilities of
+all schema objects accessed by the query.
+
+This idea was rejected because capabilities are just another indirection
+between roles and schema objects. Also, it does not allow differentiation
+between reads and writes of objects.
+
+
+Backwards Compatibility
+=======================
+
+Dump/restore of a branch with some existing roles must be implemented such
+that these roles get assigned all capabilities.
+
+Otherwise, this proposal is fully backward compatible.
