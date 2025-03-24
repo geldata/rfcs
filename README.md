@@ -14,6 +14,7 @@ To read more on when and how to submit an RFC document, see RFC 1.
 * [RFC 1022 - Typing free objects & simplifying SDL syntax](./text/1022-freetypes.rst)
 * [RFC 1026 - EdgeDB Networking Module](./text/1026-net-module.rst)
 * [RFC 1027 - Simplifying path resolution](./text/1027-no-factoring.rst)
+* [RFC 1029 - Role Based Access Control](./text/1029-rbac.rst)
 
 ### Accepted
 * [RFC 1 - The RFC Process](./text/0001-rfc-process.rst) (active)
