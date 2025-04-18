@@ -55,6 +55,30 @@ Where Gel-related files are prefixed with ``+``. In short:
 Codegen
 =======
 
+* We're introducing a new tool: ``gel generate``. It will:
+
+  - simplify the implementation of code generators and improve the discoverability of them.
+
+  - be part of our CLI and will be written in Rust. It will delegate the actual code generation to separaate tools. ``gel generate X`` will try the following:
+
+    - check if ``gel-X`` is available in ``PATH``, if so - run it.
+
+    - check against the list of known generators, if found - run it. E.g. ``gel generate ts/querybuilder`` can attempt running ``npx @gel/ts-querybuilder``.
+
+  - will provide the necessary CLI connection arguments and will be resolving the instance to to generate code for. Once the instance is resolved, the tool can invoke the actual generator tool as a subprocess, passing the instance name/secrets via env vars.
+
+  - will have a ``--list`` flag to list all available known generators.
+
+* The ``.edgeql`` to ``.py`` code gen tools will be updated to to customize the generated code in several ways:
+
+  - add ``--model`` option to generate ORM-aware code. When passed (for example, ``--model=app.model``), the generated type for ``select User`` would be inherited from ``app.model.default.User.__variants__.Empty``.
+
+  - add ``--file-suffix`` option to customize the suffix of the generated file. E.g. ``gel generate --file-suffix=blocking --target=sync`` would cause ``foo.edgeql`` to be reflected into ``foo_blocking.py`` with synchronous raw client API inside.
+
+  - add ``--target=sync|async`` to generate code for sync and async clients respectively.
+
+  - there will be no defaults for any of these flags.  When invoked manually the user will have to specify all of them.  Integrations like ``fastapi dev`` would auto-configure the flags internally, tuned to the current project.
+
 * Gel's modules should be reflected into Python files inside ``app/models``.
 
 * We will be using a hard dependancy on **pydantic**.
@@ -96,8 +120,8 @@ These will be returning "raw" clients, where results of the queries will be reco
 
 The main change will be that ``create_client()`` and ``create_async_client()`` will be idempotent. IOW they will re-use the same underlying connection pool unless explicitly created with ``detached=True``.
 
-create_db() and create_async_db()
----------------------------------
+get_db() and get_async_db()
+---------------------------
 
 These will be the new API for creating ORM-aware clients. They will also be the *preferred* API.
 
@@ -113,7 +137,7 @@ These will be returning ORM-aware clients with APIs being supersets of sync/asyn
 
 * They will have a ``save()`` method to sync changes to Python objects with the database.
 
-* Just like ``create_client()``, ``create_db()`` connectors will be reusing the same underlying connection pool unless explicitly created with ``detached=True``.
+* Just like ``create_client()``, ``get_db()`` connectors will be reusing the same underlying connection pool unless explicitly created with ``detached=True``.
 
 
 ORM
@@ -131,7 +155,7 @@ ORM
 
 * We will also be *always* fetching all link properties by default.
 
-* We'll be adding a new ``lazy`` annotation / field to exclude properties/computeds from splats.
+* We'll be adding a new ``lazy`` annotation / field to exclude properties/computeds/link-properties from splats.
 
 * Objects can be mutated and saved: ``user.name = 'Peter'; await db.save(User(name='Anna'), user)``
 
@@ -171,6 +195,12 @@ ORM
 
         weight = user.friends.__linkprops__.weight  # type: `int | None`
 
+* ``.id`` is a required property in Gel, however, in Python *new* objects won't have an ``.id`` until they pass through a ``save()`` call. This presents a dilemma: should the ORM type's ``id`` property be optional or required? We say it will be required, because objects will be read more often than written, so we want to optimize for the common case. Accessing the ``id`` property on an unsaved object will raise a runtime error.
+
+  - That said, the reflected types will have a custom ``__init__`` that will not accept an ``id`` argument (in disagreement with the type annotation for the field being "required").
+
+  - The custom ``__init__`` will also require passing all required links, which would be in disagreement with all links being "optional" in Python by default.
+
 * Prisma-style API for custom shapes: ``User.select(name=True)``, ``User.select(name=True, settings=User.settings.select())`` instead of ``User.select(User.name)``.
 
 * We will prohibit shadowing links with detached types, e.g. this is correct:
@@ -186,6 +216,73 @@ ORM
       User.select(name=True, friends=User.select())
 
   (only in Python ORM, EdgeQL will still allow this.)
+
+* Accessing a property or link that wasn't fetched will raise an error.
+
+  - But, setting a property or link that wasn't fetched will *not* raise an error:
+
+    .. code-block:: python
+
+        user = await db.get(User.select(name=True))
+
+        print(user.email)  # <- runtime error
+
+        user.email = 'peter@example.com'  # <- fine!
+        await db.save(user)
+
+* "Multi" links and properties will be represented as list-like collections in Python:
+
+  - Properties will be represented as ``gel.List`` (the exact name is still TBD) and will allow duplicate entries.
+
+  - Links will be represented as ``gel.DistinctList`` and will not allow duplicate entries.
+
+  - ``List`` and ``LinkList``, like Python's ``list`` will implement the ``+=`` operator to extend the list, e.g. ``user.friends += [friend]`` (note the square brackets on the right hand side).
+
+  - unlike Python's ``list`` they will also implement the ``-=`` operator to remove items from the list, e.g. ``user.friends -= [friend]``.
+
+  - ``LinkList`` will have a custom-tailored ``append()`` method that would accept keyword-only arguments to set link properties, e.g. ``user.friends.append(friend, weight=10)``.
+
+    - This approach has benefits of being succinct and allows for full type safety.
+
+    - Internally, such an ``append()`` call will create a "proxy" object wrapping the ``friend`` object and capturing the ``weight`` value.
+
+      - The proxy is needed to avoid the ambiguity of ``weight`` being a property of ``User`` or ``User__friends__User``.
+
+      - It's also needed to handle edge cases like:
+
+        .. code-block:: python
+
+            anna = User(name='Anna')
+            u.friends.append(anna, weight=10)
+            db.save(u, anna)
+
+        in the above snippet we have to ensure that ``anna`` is not saved twice. Having a proxy object, as opposed to creating a new ``User__friends__User`` object with copied values, allows ``save()`` to special-case objects with link properties and ensure correct behavior.
+
+      - The proxy object will have dynamic getters and setters updating the object it wraps on changes.
+
+      - The proxy object can be used prior to being saved, but will be "dead" after the save:
+
+        .. code-block:: python
+
+            anna = User(name='Anna')
+            u.friends.append(anna, weight=10)
+            proxied = u.friends[0]
+            proxied.__linkprops__.weight = 11 # <- changed my mind!
+            save(u)
+
+            print(proxied.name) # <- runtime error
+
+    - ``LinkList`` and ``List`` can only cause updates or removals on values/objects that they have fetched:
+
+      - Calling ``u.friends.clear()`` will generate a query to remove only the objects that were present in ``u.friends``.
+
+      - Calling ``u.friends.remove(some_user)`` will only succeed if ``some_user`` is present in ``u.friends``, otherwise it will raise an error.
+
+        The reason for this behavior is that we can't know for sure how the link was fetched. For example, it could have been fetched without any filters, but it could also had an access policy in effect only giving it partial visibility. In such case, having ``u.friends.clear()`` wiping the link would be a disaster. Moreover, with this simple rule the API will be more debuggable & predictable for users.
+
+        In the future we can consider adding an explicit method for generating a filter-less ``delete`` query on ``save()``, e.g. ``user.friends.delete_all()``.
+
+      - We specifically are going with the list-like semantics instead of set-like semantics because we want deletion of a non-existing element to be an error, unlike ``set.discard()`` which would do nothing in such case. Moreover, Gel's sets when fetched can have an order, so at the very least we'd have to create an ``OrderedSet`` type (Python sets are unordered).
 
 
 Changes to the CLI
@@ -241,18 +338,16 @@ instead of:
 where the hypothetical ``.with_link_props()`` would have a lot of problems, including being extremely verbose, but also total lack of Python type safety.
 
 
-Open questions
-==============
+Why get_db() and not just create_client()?
+------------------------------------------
 
-* Should we allow incremental development backups of *cloud* instances? What if a user prefers to develop against a cloud instance?
+The ORM client has to be tied to the specific reflected model, because:
 
-* If clients created by ``create_client()`` and ``create_async_client()`` are "raw", and ``create_db()`` is an ORM-aware client, how do we reflect ``.edgeql`` files into Python? "raw" clients will use types incompatible with ORM-aware clients, and so will be the generated code tailored for them.
+* for Python typing, we *might* need to add some overloads of standard client APIs for better code completion experience.
 
-* Can ``lazy`` be set on *link properties*? This can be a way to opt out from automatically fetching them by our query builder.
+* at runtime, codecs have to know which Python type is associated with a specific Gel's ``.__type__.id``.
 
-* Will our links be empty lists when not fetched or ``None``?
-
-* Should ``.id`` be optional or required? For every object fetched form the database we will always have an ID, but for newly created objects we won't until they are saved.
+We considered implementing magical runtime registry that the generic ``create_client()`` could be using to get the right Python type for a given Gel's ``.__type__.id``, but having such registry would complicate the code and open the door to weird edge cases (duplicate type IDs for different Gel branches or schemas, etc.)
 
 
 Future work
