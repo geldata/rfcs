@@ -284,6 +284,7 @@ ORM
 
       - We specifically are going with the list-like semantics instead of set-like semantics because we want deletion of a non-existing element to be an error, unlike ``set.discard()`` which would do nothing in such case. Moreover, Gel's sets when fetched can have an order, so at the very least we'd have to create an ``OrderedSet`` type (Python sets are unordered).
 
+* We can raise ``ResourseWarning`` when an unsaved ORM object is GCed.
 
 Changes to the CLI
 ==================
