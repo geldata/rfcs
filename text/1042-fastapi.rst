@@ -135,7 +135,7 @@ These will be returning ORM-aware clients with APIs being supersets of sync/asyn
 
 * Their ``query*()`` methods will be returning ORM objects.
 
-* They will have a ``save()`` method to sync changes to Python objects with the database.
+* They will have a ``save()`` and ``delete()`` methods, more on them in the ORM section.
 
 * Just like ``create_client()``, ``get_db()`` connectors will be reusing the same underlying connection pool unless explicitly created with ``detached=True``.
 
@@ -148,6 +148,25 @@ ORM
 * Objects will implement ``__eq__`` and ``__hash__`` based on Gel's object ID. We will always be fetching Gel's ID (implicitly). This mimics Django, Ruby's active record, etc.
 
   - not yet saved objects won't hash or eq, raising an error.
+
+* ``db.save()`` will be a new method on the client object.
+
+  - The function will attempt to insert / update the passed objects.
+
+  - The function will be atomic, if for whatever reason one of the onbjects can't be saved -- none will be saved.
+
+* ``db.delete()`` will be another new method on the client object (similar to ``save()``).
+
+  - The function will delete the passed objects by their IDs. So
+    ``await db.delete(u1, u2)`` would be equivalent to
+    ``delete (select User filter .id = u1.id or .id = u2.id)``.
+
+  - The function will be atomic, if for whatever reason one of the onbjects can't be deleted -- none will be deleted.
+
+  - Deleting an object that hasn't been saved will be a no-op.
+
+  - Deleting an object that no longer exists in the database will also be a no-op.
+
 
 * Reflected Gel types will have class methods on them to build queries, e.g. ``User.select(..)``, ``User.filter(..)``, etc.
 
@@ -272,6 +291,8 @@ ORM
 
             print(proxied.name) # <- runtime error
 
+      - Attempting to link an object that no longer exists in the database will be an error, aborting the ``save()`` call.
+
     - ``LinkList`` and ``List`` can only cause updates or removals on values/objects that they have fetched:
 
       - Calling ``u.friends.clear()`` will generate a query to remove only the objects that were present in ``u.friends``.
@@ -285,6 +306,43 @@ ORM
       - We specifically are going with the list-like semantics instead of set-like semantics because we want deletion of a non-existing element to be an error, unlike ``set.discard()`` which would do nothing in such case. Moreover, Gel's sets when fetched can have an order, so at the very least we'd have to create an ``OrderedSet`` type (Python sets are unordered).
 
 * We can raise ``ResourseWarning`` when an unsaved ORM object is GCed.
+
+
+ORM & transactions
+==================
+
+* ORM objects will have to be aware of transactions and reset any changes made to them if the transaction is aborted. This is important because our transaction API is designed to be repeatable. Example:
+
+  .. code-block:: python
+
+       u = User(name='John', email='john.doe@example.com')
+
+       try:
+           async for tx in db.transaction():
+               async with tx:
+                   u.email = 'john@example.com'
+
+                   some_other_user.friends += [u]
+                   await tx.save(some_other_user)  # <- Let's say this fails.
+        except:
+            pass
+
+        # The email we attemoted to set inside the transaction should be
+        # reverted back.
+        assert u.email == 'john.doe@example.com'
+
+* Internally this can be implemented by maintaining an indirection inside the object attribute storage. Say we have two "buckets", one is the default implicit transaction bucket, and the other can be tied to the currently active transaction object (propagated through a ``contextvar``).
+
+  - When a transaction starts and we attempt to mutate an object created outside of it, we'll copy its attributes into the transaction bucket and then layer updates there.
+
+  - It's an error to mutate an object in more than one "concurrent" transaction block (otherwise reconciling changes would be non-deterministic).
+
+  - This approach should be adaptable to support nested transactions (savepoints) in the future by maintaining a stack of states for the current transaction.
+
+  - When a transaction is committed, we'll copy the changes from the transaction bucket back to the object's main bucket.
+
+* In the v0 implementation we can skip supporting transactions at all on the ``get_db()`` clients.
+
 
 Changes to the CLI
 ==================
