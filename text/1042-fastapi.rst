@@ -155,6 +155,8 @@ ORM
 
   - The function will be atomic, if for whatever reason one of the onbjects can't be saved -- none will be saved.
 
+  - It's an error to attempt to mutate or ``save()``  an object that's being *currently* saved/deleted via the ORM APIs. E.g. ``user.friends += [joe]``, and 2 concurrent ``db.save(user)`` calls must not append two Joes.
+
 * ``db.delete()`` will be another new method on the client object (similar to ``save()``).
 
   - The function will delete the passed objects by their IDs. So
@@ -167,6 +169,7 @@ ORM
 
   - Deleting an object that no longer exists in the database will also be a no-op.
 
+  - Like for ``save()``, concurrent ``delete()`` calls will be rejected with an error.
 
 * Reflected Gel types will have class methods on them to build queries, e.g. ``User.select(..)``, ``User.filter(..)``, etc.
 
