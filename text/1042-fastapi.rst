@@ -65,11 +65,11 @@ Codegen
 
     - check against the list of known generators, if found - run it. E.g. ``gel generate ts/querybuilder`` can attempt running ``npx @gel/ts-querybuilder``.
 
-  - will provide the necessary CLI connection arguments and will be resolving the instance to to generate code for. Once the instance is resolved, the tool can invoke the actual generator tool as a subprocess, passing the instance name/secrets via env vars.
+  - will provide the necessary CLI connection arguments and will be resolving the instance to generate code for. Once the instance is resolved, the tool can invoke the actual generator tool as a subprocess, passing the instance name/secrets via env vars.
 
   - will have a ``--list`` flag to list all available known generators.
 
-* The ``.edgeql`` to ``.py`` code gen tools will be updated to to customize the generated code in several ways:
+* The ``.edgeql`` to ``.py`` code gen tools will be updated to customize the generated code in several ways:
 
   - add ``--model`` option to generate ORM-aware code. When passed (for example, ``--model=app.model``), the generated type for ``select User`` would be inherited from ``app.model.default.User.__variants__.Empty``.
 
@@ -349,7 +349,7 @@ ORM & batching
 
 * ``db.save()`` and ``db.delete()`` will accept multiple objects at once, allowing for batching multiple updates into a single round-trip to the database.
 
-* We can consider implementing ``db.batch_save()`` method that would accept an asynchronous generator of objects to save. This would allow for internal distributing of commands accross multiple network connections.
+* We can consider implementing ``db.batch_save()`` method that would accept an asynchronous generator of objects to save. This would allow for internal distributing of commands accross multiple network connections
 
 
 Changes to the CLI
