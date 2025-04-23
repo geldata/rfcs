@@ -61,7 +61,7 @@ Codegen
 
   - be part of our CLI and will be written in Rust. It will delegate the actual code generation to separaate tools. ``gel generate X`` will try the following:
 
-    - check if ``gel-X`` is available in ``PATH``, if so - run it.
+    - check if ``gel-generate-X`` is available in ``PATH``, if so - run it.
 
     - check against the list of known generators, if found - run it. E.g. ``gel generate ts/querybuilder`` can attempt running ``npx @gel/ts-querybuilder``.
 
@@ -100,7 +100,7 @@ Codegen
 * Generated Python types will have a special ``__variants__`` class property to access "building bricks" -- fragments of types that can be re-shaped into different useful dataclasses, e.g.:
 
   - ``models.default.User.__variants__.Empty`` -- an empty type that has ``id`` and ``__tid__`` attributes.
-  - ``models.default.User.__variants__.Optional`` -- a type with all links and properties marked as optiona.
+  - ``models.default.User.__variants__.Optional`` -- a type with all links and properties marked as optional.
 
 * Generated Python types will *also* have a special ``__typeof__`` class property to access types of fields, useful for defining custom dataclasses without copy/pasting. E.g.:
 
@@ -129,7 +129,7 @@ Users will be importing these from ``app.models``:
 
 .. code-block:: python
 
-    from app.models import create_async_db
+    from app.models import get_async_db
 
 These will be returning ORM-aware clients with APIs being supersets of sync/async "raw" clients:
 
@@ -212,7 +212,7 @@ ORM
 
         user = await db.get(User.select(friends=User.friends.select()))
 
-        weight = user.friends.__linkprops__.weight  # type: `int | None`
+        weight = user.friends[0].__linkprops__.weight  # type: `int | None`
 
 * ``.id`` is a required property in Gel, however, in Python *new* objects won't have an ``.id`` until they pass through a ``save()`` call. This presents a dilemma: should the ORM type's ``id`` property be optional or required? We say it will be required, because objects will be read more often than written, so we want to optimize for the common case. Accessing the ``id`` property on an unsaved object will raise a runtime error.
 
@@ -342,6 +342,14 @@ ORM & transactions
   - When a transaction is committed, we'll copy the changes from the transaction bucket back to the object's main bucket.
 
 * In the v0 implementation we can skip supporting transactions at all on the ``get_db()`` clients.
+
+
+ORM & batching
+==============
+
+* ``db.save()`` and ``db.delete()`` will accept multiple objects at once, allowing for batching multiple updates into a single round-trip to the database.
+
+* We can consider implementing ``db.batch_save()`` method that would accept an asynchronous generator of objects to save. This would allow for internal distributing of commands accross multiple network connections.
 
 
 Changes to the CLI
