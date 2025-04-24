@@ -275,6 +275,13 @@ will be triggered.
 Similarly, the watch settings are invalid if they attempt to monitor files
 outside of the project directory structure.
 
+There should be a way to execute CLI commands without triggering any hooks. We
+propose the ``--skip-hooks`` boolean flag to be added to the ``gel`` CLI
+top-level options. If present it signals to the CLI that the current command
+must not trigger any hooks and must behave as if no hooks are set up. Same
+effect can be achieved by setting ``GEL_SKIP_HOOKS`` environment variable
+to a truthy value.
+
 
 Design Considerations
 =====================
