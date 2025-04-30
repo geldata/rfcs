@@ -9,7 +9,7 @@
 RFC 1029: Role Based Access Control
 ===================================
 
-This RFC discusses expansion of roles and capatibilities that are
+This RFC discusses expansion of roles and capabilities that are
 used to limit the access to a database based on provided connection
 credentials.
 
@@ -63,13 +63,14 @@ Proposal
 Capabilities
 ------------
 
-Each role is assigned a set of allowed capabilities from the list of existing
-capabilities above.
+Each role is assigned a set of allowed capabilities, which can either be any of 
+their existing capabilities listed above or any other user-defined string.
 
 When executing a query, the server computes the intersection of the current
 role's allowed capabilities and explicitly specified capabilities in the
 ``Parse`` or ``Execute`` messages. If compiled query requires a capability that
-is not in the intersection, the query is rejected.
+is not in the intersection, the query is rejected without even sending it to
+PostgreSQL.
 
 To set ``capabilities`` of a role, ``SET`` command can be used with a
 comma-separated list of capability names.
@@ -84,19 +85,21 @@ When new instances are created, the initial user has all capabilities assigned
 by default.
 When creating a new role, no capabilities are assigned.
 
-In addition to the capabilities listed above, the following aliases are allowed:
+The following special capabilities can be assigned to roles:
 
-- ``ALL`` is normalized into all possible capabilities,
-- ``CLI`` is normalized into ``TRANSACTION,SESSION_CONFIG,PERSISTENT_CONFIG``.
+- ``ALL``, which matches any required capability,
+- ``CLI``, which matches any of ``TRANSACTION``, ``SESSION_CONFIG``,
+  ``PERSISTENT_CONFIG``.
 
 
 Per-object access control
 -------------------------
 
-We introduce a new function, ``sys::get_current_role()`` that returns the role
-of the current connection.
+We introduce ``global sys::current_capabilities: multi str`` which returns
+capabilities of the role of the current connection.
 
-It returns a ``str`` that can be used in any expression.
+It cannot be assigned to, but it is otherwise a normal global variable;
+it can be used in any expression.
 
 In combination with access policies, this allows precise control over which
 objects of an object type are visible or can be modified by each role.
@@ -108,39 +111,97 @@ For example::
 
         CREATE ACCESS POLICY allow_admin
             ALLOW ALL
-            USING (sys::get_current_role() = 'admin');
+            USING ('admin' in global sys::current_capabilities);
 
         CREATE ACCESS POLICY allow_warehouse
             ALLOW SELECT
-            USING (sys::get_current_role() = 'warehouse_exporter');
+            USING ('data_export' in global sys::current_capabilities);
 
         CREATE ACCESS POLICY allow_inserts
             ALLOW INSERT;
     };
 
+An important detail is that access policies for ``select`` only filter data
+and do not raise errors when an object type is accessed without required
+permissions. It would be more user-friendly to raise an error instead of
+returning no results, but we currently do not provide a reliable way of
+raising errors within access policies. See rejected ideas for justification.
 
-.. access policies that return an error when an object is accessed?
+Per-function access control
+---------------------------
 
-.. access policies for functions such as sys::reset_query_stats?
+Functions cannot have access policies, but we do want to be able to
+limit access to certain functions, such as ``sys::reset_query_stats`` and
+``net::http::schedule_request``.
+
+To provide access control to functions, we introduce a new function metadata
+field named ``require_capability``. It adds the provided capability to the list
+of required capabilities of the query, similar to how `DDL` and other existing
+capabilities work.
 
 
-Rejected Ideas
+Rejected ideas
 ==============
 
-User-defined capabilities
--------------------------
 
-Each role has a set of capabilities, which can be arbitrary strings in
-addition to all of the existing capabilities listed above.
+Capability annotations
+----------------------
 
 Each schema object can be annotated by a list of required capabilities.
-
 To execute a query, the role has to have all of required capabilities of
 all schema objects accessed by the query.
 
-This idea was rejected because capabilities are just another indirection
-between roles and schema objects. Also, it does not allow differentiation
-between reads and writes of objects.
+This idea was rejected because we already have a mechanism for access control
+on object types and we don't want feature duplication. Access policies also
+allow differentiation between reads and writes of objects.
+
+Provide sys::current_role instead of capabilities
+-------------------------------------------------
+
+Instead of ``sys::current_capabilities`` we introduce ``sys::current_role``.
+It would remove an indirection and make RBAC simpler.
+
+This idea was rejected because we want to limit access to std lib object types
+and functions (e.g. ``sys::QueryStats``). If we hard-coded role names into
+access policies of such objects, users would be required to have roles with
+those names and would not be able to grant or revoke access of different roles
+to said objects.
+
+
+Introduce a function instead of global
+--------------------------------------
+
+Instead of introducing ``global sys::current_capabilities``, we could introduce
+function ``sys::get_current_capabilities()`` or even
+``sys::has_current_capability(cap: str)``.
+
+This idea was rejected as using a function would be functionally equivalent,
+but harder to implement. Implementation plans to inject the list of current
+capabilities via PostgreSQL query parameters, which is exactly what we already
+do for globals. Using a global would thus simplify implementation.
+
+Raising errors from access policies
+-----------------------------------
+
+To implement "raising an error in access policy" instead of
+"filter query results", we could recommend using an ``assert`` in the body of
+the access policy.
+
+The first problem, is that this approach would not work for object types that
+do not contain any objects (or are immediately filtered down to zero objects).
+
+Secondly, there is a possibility that PostgreSQL optimizer would not trigger
+the assert failure and would just return an empty result. We do not have a
+clear picture of exactly when this would happen, but we had have it happen
+before. Because of that we would prefer not to rely on this mechanism for RBAC,
+which is supposed to be used as a security barrier and requires a high degree
+of certainty in its correctness.
+
+That said, there is nothing that would prevent users from using ``assert`` in
+access policy body as of now. For higher degree of certainty, the policy could
+be written such that if assert fails to trigger, an empty result is returned.
+That would only leak type information of the result, which can be introspected
+from ``schema::ObjectType`` anyway. 
 
 
 Backwards Compatibility
