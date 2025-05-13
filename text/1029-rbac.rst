@@ -9,7 +9,7 @@
 RFC 1029: Role Based Access Control
 ===================================
 
-This RFC discusses expansion of roles and capabilities that are
+This RFC discusses expansion of roles and permissions that are
 used to limit the access to a database based on provided connection
 credentials.
 
@@ -39,7 +39,9 @@ Currently, Gel supports creation and modification of roles. Each role has a name
 and optionally a password. When connecting to an instance, role name is
 specified as the username.
 
-In addition, when executing EdgeQL queries, users can specify which of the
+Roles can only be designated as ``SUPERUSER``.
+
+In addition, when executing EdgeQL queries, the request can specify which of the
 following capabilities are allowed to be used by the query: 
 
 - ``MODIFICATIONS``: whether INSERT/UPDATE/DELETE statements are allowed,
@@ -51,7 +53,7 @@ following capabilities are allowed to be used by the query:
 These capabilities are expressed as bit flags in ``Parse`` and ``Execute``
 messages. Language bindings are supposed to set only ``MODIFICATIONS`` and
 ``DDL`` by default for queries executed by user code.
-Gel CLI sets all capabilities.
+Gel CLI allows all above capabilities.
 
 Connection role does not affect allowed capabilities.
 
@@ -60,45 +62,80 @@ Proposal
 ========
 
 
-Capabilities
-------------
+Non-superuser roles
+-------------------
 
-Each role is assigned a set of allowed capabilities, which can either be any of 
-their existing capabilities listed above or any other user-defined string.
+We allow creating roles that are not marked as ``SUPERUSER``. These roles are
+not allowed to use any commands apart from querying.
 
-When executing a query, the server computes the intersection of the current
-role's allowed capabilities and explicitly specified capabilities in the
-``Parse`` or ``Execute`` messages. If compiled query requires a capability that
-is not in the intersection, the query is rejected without even sending it to
-PostgreSQL.
+Permissions
+-----------
 
-To set ``capabilities`` of a role, ``SET`` command can be used with a
-comma-separated list of capability names.
+Permission is a schema object, with a `CREATE` and `DROP` DDL commands, scoped
+to a module:
 
-Syntax example::
+code::
 
-    CREATE ROLE my_role {
-        SET capabilities := 'MODIFICATIONS,DDL';
+    CREATE PERMISSION default::data_export;
+    CREATE PERMISSION frontend::webapp;
+
+
+User schema can contain any number of permissions, in addition to the
+following permissions defined in the schema.
+
+- ``sys::data_modifiction`` is required for ``insert``, ``delete`` and
+  ``update`` EdgeQL queries.
+- ``sys::query_stats`` is required to access ``sys::QueryStats`` and associated
+  functions.
+
+.. TODO: add more caps for issuing net requests
+
+Each role is assigned a set of allowed permissions, via `permissions` property
+of roles.
+
+code::
+
+    ALTER ROLE my_role {
+        SET permissions := {
+            default::data_export, frontend::webapp, sys::modifications
+        };
     };
 
-When new instances are created, the initial user has all capabilities assigned
-by default.
-When creating a new role, no capabilities are assigned.
+.. When executing a query, the server computes the intersection of the current
+.. role's allowed capabilities and explicitly specified capabilities in the
+.. ``Parse`` or ``Execute`` messages. If compiled query requires a capability that
+.. is not in the intersection, the query is rejected without even sending it to
+.. PostgreSQL.
 
-The following special capabilities can be assigned to roles:
 
-- ``ALL``, which matches any required capability,
-- ``CLI``, which matches any of ``TRANSACTION``, ``SESSION_CONFIG``,
-  ``PERSISTENT_CONFIG``.
+When a new role is created, it is assigned no permissions. Roles marked as
+``SUPERUSER`` are deemed to have all permissions.
+
+Since roles are created per-instance, their assigned permissions are applied
+to all branches and their schemas. The ``permissions`` property of roles are
+not name-checked against any schema. They can be set to arbitrary identifiers.
+
+It is required that an instance where roles' permissions are referring to
+permissions in the user schema can have its schema wiped, without affecting
+roles or their assigned permissions. Similarly, it is required that an empty
+instance can be populated with roles and their permissions, before applying
+schema.
+
+When validating, role's permissions are compared to schema permissions by
+their fully-qualified identifiers, converted to strings.
+
+Permissions can only be set by ``SUPERUSER`` users, similarly to how roles can
+only be created and dropped by super users.
 
 
 Per-object access control
 -------------------------
 
-We introduce ``global sys::current_capabilities: multi str`` which returns
-capabilities of the role of the current connection.
+For each created permission, a global with the same name is made available.
+It is evaluated to a boolean value, which is true iff the role of current
+connection has the associated permission.
 
-It cannot be assigned to, but it is otherwise a normal global variable;
+The global cannot be assigned to, but it is otherwise a normal global variable;
 it can be used in any expression.
 
 In combination with access policies, this allows precise control over which
@@ -109,13 +146,13 @@ For example::
     CREATE TYPE Secret {
         CREATE PROPERTY super_secret: str;
 
-        CREATE ACCESS POLICY allow_admin
+        CREATE ACCESS POLICY allow_webapp
             ALLOW ALL
-            USING ('admin' in global sys::current_capabilities);
+            USING (global frontend::webapp);
 
         CREATE ACCESS POLICY allow_warehouse
             ALLOW SELECT
-            USING ('data_export' in global sys::current_capabilities);
+            USING (global data_export);
 
         CREATE ACCESS POLICY allow_inserts
             ALLOW INSERT;
@@ -135,30 +172,113 @@ limit access to certain functions, such as ``sys::reset_query_stats`` and
 ``net::http::schedule_request``.
 
 To provide access control to functions, we introduce a new function metadata
-field named ``require_capability``. It adds the provided capability to the list
-of required capabilities of the query, similar to how `DDL` and other existing
+field named ``require_permission``. It adds the provided permission to the list
+of required permissions of the query, similar to how `DDL` and other existing
 capabilities work.
+
+code::
+
+    CREATE FUNCTION sys::reset_query_stats(...) -> ... {
+        SET volatility := ...
+        SET require_permission := sys::query_stats;
+        USING SQL FUNCTION ...;
+    }; 
+
+When a query is compiled the set of required permissions is stored on the
+compiled query unit. When executing the unit, the server validates that all
+permissions of this set are held by the role of current connection and that
+these permissions are allowed by the protocol capabilities allowed by the
+client.
+
+
+Future work
+===========
+
+Converting more of SUPERUSER to permissions
+-------------------------------------------
+
+With current design non-SUPERUSER rols have a very limited access to the
+database. Namely, they cannot apply migrations, use in-language transaction
+commands, modify or view config, use explain, describe or administer.
+
+We will probably want to convert access to these commands into permissions
+defined in ``sys`` module, similar to ``sys::data_modification``.
+
+Before this RFC, non-SUPERUSER roles has practically no permissions. This RFC
+aims to grant as little access as possible, while still being practical.
+That's because granting new access is a non-breaking change, but taking away
+access is a breaking change.
+
+
+Permission inheritance
+----------------------
+
+Similar to other schema objects, permissions could be allowed to extend other
+permissions.
+
+    CREATE PERMISSION log_export EXTENDING data_export;
+
+When a role is assigned a permission, it is also assigned all of its
+descendant permissions.
+
+This would be useful for constructing a granular permission surface, while
+also having a way to grant permissions in bulk.
+
+A need for this was shown when all protocol-level capabilities were also
+schema-defined permissions and we needed a way to allow roles to use the cli:
+
+code::
+
+    CREATE PERMISSION sys::schema_modification EXTENDING sys::cli;
+    CREATE PERMISSION sys::data_modification EXTENDING sys::cli;
+    CREATE PERMISSION sys::stateful_config EXTENDING sys::cli;
+    ALTER ROLE my_user { SET permissions := {sys::cli}; };
+
+
+Ownership
+---------
+
+With current design, there is no such concept as "the owner of a schema object".
+Schema just extists and anyone who is ``SUPERUSER`` is allowed to modify it.
+
+There are use-cases (and designs in other RBAC implementations) for each object
+to have an owner, who has exclusive modification permissions over that object.
+
+Because exact design and interaction with inheritance is unclear, this idea is
+left to be explored in the future.
+
+
+Context role switching
+----------------------
+
+With current design, functions, triggers, and all other query constructs are
+executed and validated against the role of current connection.
+
+There are use-cases for ability to switch the context of the current role to
+some other role in the instance.
+
+An example would be a function that can execute its body in the context of the
+role that created that function.
 
 
 Rejected ideas
 ==============
 
-
-Capability annotations
+Permission annotations
 ----------------------
 
-Each schema object can be annotated by a list of required capabilities.
-To execute a query, the role has to have all of required capabilities of
+Each schema object can be annotated by a list of required permissions.
+To execute a query, the role has to have all of required permissions of
 all schema objects accessed by the query.
 
 This idea was rejected because we already have a mechanism for access control
 on object types and we don't want feature duplication. Access policies also
 allow differentiation between reads and writes of objects.
 
-Provide sys::current_role instead of capabilities
--------------------------------------------------
+Provide sys::current_role instead of permissions
+------------------------------------------------
 
-Instead of ``sys::current_capabilities`` we introduce ``sys::current_role``.
+Instead of ``sys::current_permissions`` we introduce ``sys::current_role``.
 It would remove an indirection and make RBAC simpler.
 
 This idea was rejected because we want to limit access to std lib object types
@@ -171,14 +291,21 @@ to said objects.
 Introduce a function instead of global
 --------------------------------------
 
-Instead of introducing ``global sys::current_capabilities``, we could introduce
-function ``sys::get_current_capabilities()`` or even
-``sys::has_current_capability(cap: str)``.
+Instead of introducing ``global default::data_export``, we could introduce
+function ``sys::get_current_permissions(): set of str`` or
+``sys::has_current_permission(cap: str)``.
 
-This idea was rejected as using a function would be functionally equivalent,
-but harder to implement. Implementation plans to inject the list of current
-capabilities via PostgreSQL query parameters, which is exactly what we already
-do for globals. Using a global would thus simplify implementation.
+This idea was rejected because we want to avoid providing permissions as
+strings, since that would allow users to perform text operations on them, which
+is an anti-pattern. Strings are also not strongly typed and would not produce
+error messages when the name of the permission is misspelled, for example.
+
+We also explored having a function that would take an proper identifier of
+the capability, for example ``sys::has_permission(perm: schema::Permission)``,
+but that would require weird calling syntax
+(``sys::has_permission(introspect default::data_export)``) and also open the
+question what is the value of plain ``select default::data_export``.
+
 
 Raising errors from access policies
 -----------------------------------
