@@ -258,7 +258,12 @@ There are use-cases for ability to switch the context of the current role to
 some other role in the instance.
 
 An example would be a function that can execute its body in the context of the
-role that created that function.
+role that created that function, such as a function to log user actions which
+inserts into an admin table.
+
+This can be implemented by adding a "security" field which would be an enum of
+``(Definer, Invoker)``. Triggers, functions and other mutation actors can be
+declared with ``security := Definer`` to effectively run in superuser context.
 
 
 Rejected ideas
