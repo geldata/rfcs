@@ -97,7 +97,7 @@ code::
 
     ALTER ROLE my_role {
         SET permissions := {
-            default::data_export, frontend::webapp, sys::modifications
+            default::data_export, frontend::webapp, sys::data_modifiction
         };
     };
 
@@ -197,7 +197,7 @@ Future work
 Converting more of SUPERUSER to permissions
 -------------------------------------------
 
-With current design non-SUPERUSER rols have a very limited access to the
+With current design non-SUPERUSER roles have a very limited access to the
 database. Namely, they cannot apply migrations, use in-language transaction
 commands, modify or view config, use explain, describe or administer.
 
