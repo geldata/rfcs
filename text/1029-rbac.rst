@@ -29,7 +29,7 @@ Roles or (or any other RBAC objects) must not be part of the schema, because
 different deployments of the same application should be able to configure
 different access control. Also, schema should never depend on any roles
 (or other non-schema objects), since that would prevent applying such schema to
-a fresh instance, which would break dump/restore workflow. 
+a fresh instance, which would break dump/restore workflow.
 
 
 Current state
@@ -42,7 +42,7 @@ specified as the username.
 Roles can only be designated as ``SUPERUSER``.
 
 In addition, when executing EdgeQL queries, the request can specify which of the
-following capabilities are allowed to be used by the query: 
+following capabilities are allowed to be used by the query:
 
 - ``MODIFICATIONS``: whether INSERT/UPDATE/DELETE statements are allowed,
 - ``DDL``: whether CREATE/ALTER/DROP commands are allowed,
@@ -66,7 +66,8 @@ Non-superuser roles
 -------------------
 
 We allow creating roles that are not marked as ``SUPERUSER``. These roles are
-not allowed to use any commands apart from querying.
+not allowed to use any commands apart from querying, transaction commands,
+and certain ``CONFIGURE SESSION`` commands.
 
 Permissions
 -----------
@@ -81,14 +82,7 @@ code::
 
 
 User schema can contain any number of permissions, in addition to the
-following permissions defined in the schema.
-
-- ``sys::data_modifiction`` is required for ``insert``, ``delete`` and
-  ``update`` EdgeQL queries.
-- ``sys::query_stats`` is required to access ``sys::QueryStats`` and associated
-  functions.
-
-.. TODO: add more caps for issuing net requests
+built-in permissions discussed below.
 
 Each role is assigned a set of allowed permissions, via `permissions` property
 of roles.
@@ -182,7 +176,7 @@ code::
         SET volatility := ...
         SET require_permission := sys::query_stats;
         USING SQL FUNCTION ...;
-    }; 
+    };
 
 When a query is compiled the set of required permissions is stored on the
 compiled query unit. When executing the unit, the server validates that all
@@ -191,24 +185,60 @@ these permissions are allowed by the protocol capabilities allowed by the
 client.
 
 
+Built-in permissions
+--------------------
+
+There is a collection of capabilities for built-in language features,
+matching some of the protocol capabilities:
+
+- ``sys::data_modifiction`` is required for ``insert``, ``delete`` and
+  ``update`` EdgeQL queries.
+- ``sys::ddl`` is required for performing DDL
+- ``sys::persistent_config`` is required for altering database config
+
+- ``sys::query_stats`` is required to access ``sys::QueryStats`` and associated
+  functions.
+
+
+.. TODO: EXPLAIN, DESCRIBE, ADMINISTER??
+
+.. TODO: add more caps for issuing net requests
+
+
+Session configuration permissions
+#################################
+
+Certain session configurations will always be permitted, while others
+will require a permission. Any not listed are not permitted.
+
+Always OK:
+- default_transaction_isolation
+- default_transaction_access_mode
+- default_transaction_deferrable
+- force_database_error
+- simple_scoping
+- warn_old_scoping
+- pg_trgm::*
+- pg_vector::*
+
+Requires ``cfg::configure_timeouts``
+- session_idle_transaction_timeout
+- query_execution_timeout
+
+Requires ``cfg::configure_apply_access_policies``
+- apply_access_policies
+- apply_access_policies_pg
+
+Requires ``cfg::configure_allow_user_specified_id``
+- allow_user_specified_id
+
+
+The configuration will be done with annotations on Config objects,
+like everything else with the config system.
+
+
 Future work
 ===========
-
-Converting more of SUPERUSER to permissions
--------------------------------------------
-
-With current design non-SUPERUSER roles have a very limited access to the
-database. Namely, they cannot apply migrations, use in-language transaction
-commands, modify or view config, use explain, describe or administer.
-
-We will probably want to convert access to these commands into permissions
-defined in ``sys`` module, similar to ``sys::data_modification``.
-
-Before this RFC, non-SUPERUSER roles has practically no permissions. This RFC
-aims to grant as little access as possible, while still being practical.
-That's because granting new access is a non-breaking change, but taking away
-access is a breaking change.
-
 
 Permission inheritance
 ----------------------
@@ -333,7 +363,7 @@ That said, there is nothing that would prevent users from using ``assert`` in
 access policy body as of now. For higher degree of certainty, the policy could
 be written such that if assert fails to trigger, an empty result is returned.
 That would only leak type information of the result, which can be introspected
-from ``schema::ObjectType`` anyway. 
+from ``schema::ObjectType`` anyway.
 
 
 Backwards Compatibility
