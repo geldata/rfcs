@@ -215,6 +215,7 @@ Always OK:
 - default_transaction_isolation
 - default_transaction_access_mode
 - default_transaction_deferrable
+- force_database_error
 - simple_scoping
 - warn_old_scoping
 - pg_trgm::*
