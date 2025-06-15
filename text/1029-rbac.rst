@@ -212,6 +212,7 @@ Certain session configurations will always be permitted, while others
 will require a permission. Any not listed are not permitted.
 
 Always OK:
+
 - default_transaction_isolation
 - default_transaction_access_mode
 - default_transaction_deferrable
@@ -222,14 +223,17 @@ Always OK:
 - pg_vector::*
 
 Requires ``cfg::configure_timeouts``
+
 - session_idle_transaction_timeout
 - query_execution_timeout
 
 Requires ``cfg::configure_apply_access_policies``
+
 - apply_access_policies
 - apply_access_policies_pg
 
 Requires ``cfg::configure_allow_user_specified_id``
+
 - allow_user_specified_id
 
 
