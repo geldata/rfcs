@@ -91,7 +91,7 @@ code::
 
     ALTER ROLE my_role {
         SET permissions := {
-            default::data_export, frontend::webapp, sys::data_modifiction
+            default::data_export, frontend::webapp, sys::perm::data_modifiction
         };
     };
 
@@ -174,7 +174,7 @@ code::
 
     CREATE FUNCTION sys::reset_query_stats(...) -> ... {
         SET volatility := ...
-        SET require_permission := sys::query_stats;
+        SET require_permission := sys::perm::query_stats;
         USING SQL FUNCTION ...;
     };
 
@@ -191,12 +191,12 @@ Built-in permissions
 There is a collection of capabilities for built-in language features,
 matching some of the protocol capabilities:
 
-- ``sys::data_modifiction`` is required for ``insert``, ``delete`` and
+- ``sys::perm::data_modifiction`` is required for ``insert``, ``delete`` and
   ``update`` EdgeQL queries.
-- ``sys::ddl`` is required for performing DDL
-- ``sys::persistent_config`` is required for altering database config
+- ``sys::perm::ddl`` is required for performing DDL
+- ``sys::perm::persistent_config`` is required for altering database config
 
-- ``sys::query_stats`` is required to access ``sys::QueryStats`` and associated
+- ``sys::perm::query_stats`` is required to access ``sys::QueryStats`` and associated
   functions.
 
 
@@ -222,17 +222,17 @@ Always OK:
 - pg_trgm::*
 - pg_vector::*
 
-Requires ``cfg::configure_timeouts``
+Requires ``cfg::perm::configure_timeouts``
 
 - session_idle_transaction_timeout
 - query_execution_timeout
 
-Requires ``cfg::configure_apply_access_policies``
+Requires ``cfg::perm::configure_apply_access_policies``
 
 - apply_access_policies
 - apply_access_policies_pg
 
-Requires ``cfg::configure_allow_user_specified_id``
+Requires ``cfg::perm::configure_allow_user_specified_id``
 
 - allow_user_specified_id
 
@@ -263,10 +263,10 @@ schema-defined permissions and we needed a way to allow roles to use the cli:
 
 code::
 
-    CREATE PERMISSION sys::schema_modification EXTENDING sys::cli;
-    CREATE PERMISSION sys::data_modification EXTENDING sys::cli;
-    CREATE PERMISSION sys::stateful_config EXTENDING sys::cli;
-    ALTER ROLE my_user { SET permissions := {sys::cli}; };
+    CREATE PERMISSION sys::perm::schema_modification EXTENDING sys::perm::cli;
+    CREATE PERMISSION sys::perm::data_modification EXTENDING sys::perm::cli;
+    CREATE PERMISSION sys::perm::stateful_config EXTENDING sys::perm::cli;
+    ALTER ROLE my_user { SET permissions := {sys::perm::cli}; };
 
 
 Ownership
