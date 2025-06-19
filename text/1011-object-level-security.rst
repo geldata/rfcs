@@ -53,7 +53,6 @@ Synopsis::
 
     {CREATE|ALTER} OBJECT TYPE <type-name> "{"
         CREATE ACCESS POLICY <name>
-            [ WHEN <condition> ]
             { ALLOW | DENY }
             { ALL | UPDATE | SELECT | UPDATE READ | UPDATE WRITE | INSERT | DELETE } [ , ... ]
             [ USING (<expr>) ]
@@ -86,15 +85,8 @@ for new or updated objects and affects ``INSERT`` and ``UPDATE``
 expressions, respectively: if the proposed object is outside of the
 visible set, an error is raised immediately and the query is aborted.
 
-The optional ``<condition>`` expression is evaluated for every object
-affected by the statement and the policy is applied only if the expression
-evaluates to *true*.  It is essentially equivalent to joining ``<condition>``
-with ``<expr>`` with an ``AND`` operator.  The reason for a standalone clause
-is that it makes it easier to separate *when* a policy is applied from *how* a
-policy is applied.
-
-Access policies on other types apply to both ``when`` and ``using``
-expressions, to prevent information leaks through that channel.
+Access policies on other types apply to ``using`` expressions, to prevent
+information leaks through that channel.
 
 The check expression ``<expr>`` may be omitted, which implies that the policy
 matches all objects, e.g. this is equivalent to specifying ``using (true)``.
@@ -107,8 +99,10 @@ Example read policy::
       access policy default permit read;
       # But deny those that are rated 'R' to users aged under 17.
       access policy age_appropriate
-        when ((global current_user).age < 17)
-        deny read using (.rating = 'R');
+        deny read using (
+          (global current_user).age < 17 and
+          .rating = 'R'
+        );
     }
 
 Example read/write policy::
@@ -148,8 +142,7 @@ Another example of combination of allow/deny policies::
       # ... but restrict access to private posts to owner only
       # regardless of what permissions were granted in parent types
       access policy private_owner_only
-        when (.private)
-        deny all using (.owner != global current_user);
+        deny all using (.private and .owner != global current_user);
     }
 
 
@@ -173,8 +166,6 @@ Synopsis::
       CREATE ANNOTATION <annotation-name> := <value>
       ALTER ANNOTATION <annotation-name> := <value>
       DROP ANNOTATION <annotation-name>
-      WHEN (<condition>)
-      RESET WHEN
       USING (<expr>)
       { ALLOW | DENY } { ALL | UPDATE | SELECT | UPDATE READ | UPDATE WRITE | INSERT | DELETE } [ , ... ]
 
@@ -248,9 +239,8 @@ introspection schema that is linked from ``schema::ObjectType`` via the new
 ``access_policies`` link.  The ``schema::AccessPolicy`` is exposed as follows::
 
     type schema::AccessPolicy
-	    extending schema::InheritingObject, schema::AnnotationSubject {
+      extending schema::InheritingObject, schema::AnnotationSubject {
       multi property access_kinds -> schema::AccessKind;
-      property condition -> std::str;
       required property action -> schema::AccessPolicyAction;
       required property expr -> std::str;
     };
@@ -276,9 +266,6 @@ is roughly transformed into::
         prop := prop IF (SELECT _ := <check_expr> FILTER _) ELSE raise()
       }
     INSERT Foo { prop := checked.prop }
-
-If specified, the ``WHEN`` conditions must be taken into account, e.g by
-combining directly with the ``ALLOW/DENY`` filters and check expressions.
 
 
 Rejected Alternative Ideas
@@ -329,7 +316,34 @@ duplicate large chunks of schema, as well as lack of support for mandatory
 access control, as contexts are application-centric and are opt-in.
 
 
+No need to have a ``when`` separate from ``using`` clause
+---------------------------------------------------------
+
+The previous iteration of the RFC proposed a ``when`` clause for each ``access
+policy``. However, in that implementation it was effectively an arbitrary
+splitting of the ``using`` expression into two parts, without a clear
+advantage. Instead the intent is to introduce an mechanism for grouping
+policies that could actually benefit from this kind of expression in a future
+RFC.
+
+
 Backwards compatibility
 =======================
 
-This RFC does not pose any backwards compatibility issues.
+The removal of ``when`` clause in ``access policy`` is backwards incompatible
+with the v2.0-rc2 implementation. We can leave it as allowed syntax for the
+purpose of migrations and interpret it simple as an expression that must be
+added to the ``using`` expression with a conjunction.
+
+Thus this migration command::
+
+  create access policy owner_only
+    # Must be logged in
+    when (exists global user_id)
+    # Allow viewing your own stuff
+    allow select (.owner.id ?= global user_id);
+
+... would be translated into this::
+
+  create access policy owner_only
+    allow select ((exists global user_id) and .owner.id ?= global user_id);
