@@ -263,8 +263,8 @@ error for the ``gel watch`` command. The invalid spec should not be ignored
 (silently or with a warning).
 
 
-CLI Interactions
-================
+Project Interactions
+====================
 
 All of the above settings are intended as *project* settings. Which means that
 the hooks can only be triggered by *project-specific* commands. If a command
@@ -281,6 +281,117 @@ top-level options. If present it signals to the CLI that the current command
 must not trigger any hooks and must behave as if no hooks are set up. Same
 effect can be achieved by setting ``GEL_SKIP_HOOKS`` environment variable
 to a truthy value.
+
+
+Watch Interactions
+==================
+
+The proposed ``gel watch`` process is intended to help project development and
+so we must consider how the ``gel watch`` monitoring and triggering interacts
+with other tools likely to be used in a project. Primarily the concern is that
+``gel watch --migrate`` causes changes in the database in response to changes
+in files on disk. So we need to consider how the database environment can be
+out of sync with the project code.
+
+The danger is that reacting to a schema declaration change can result in an
+unintended destructive (if things were removed from the schema) change in the
+actual data.
+
+Internal Gel Tooling
+--------------------
+
+The main source of changes to the database environment is from our own ``gel``
+tools. We need to make sure that ``gel watch`` does not drift from what the
+rest of the ``gel`` tools are doing.
+
+Environment variables generally are shell-dependent and there is no reasonable
+expectation that any such changes propagate without restarting whatever
+application depends on them.
+
+We have ``gel.toml`` configuration file that can be edited. In particular, it
+can be edited to change the scripts that the hooks run. ``gel watch`` is
+responsible for executing some of these triggered scripts and so it must
+monitor ``gel.toml`` for changes and update its own behavior accordingly
+(based on whether new files need to be monitored or hooks have been added or
+removed, etc.). In the event that it detects a configurtation change that
+cannot be satisfied by "reloading", the ``gel watch`` process should terminate
+with an error explaning what change caused it and a recommendation to restart
+manually.
+
+We also have some project-specific configuration in the project stash
+``$CONFIG/projects/`` (as specified in RFC #1025). Most of the settings in the
+stash are specified by ``gel project init`` and don't change. However, the
+current ``branch`` is updated by ``gel`` CLI branch tools. It is imperative
+that ``gel watch`` never disagrees with the rest of the Gel tools or clients
+on what the current branch is when applying changes.
+
+Lock File
+---------
+
+The current proposal is to implement a lock file ``.gel-cli.lock`` that ``gel
+watch`` will create. The lock file should contain the PID of the process that
+created it. This file should be deleted upon exit.
+
+When ``gel watch`` is started it must check the lock file and terminate with
+an error if the file is present and the process referenced in it is running.
+If the lock file references a non-existant process, the error message can say
+that the file appears to be stale. The recommendation is to still terminate
+the current ``gel watch`` and let the user handle the verification of other
+instances of ``gel watch`` running and manual removal of the lock file.
+
+The lock file itself can contain a text warning that the user should verify
+that the process which created the file is terminated before removing the lock
+file itself.
+
+The ``gel`` CLI should check if the lock file exists before making any changes
+involving the current branch. Such changes include:
+
+* changing current branch
+* rebasing or merging where one of the branches
+  involved is the current branch
+* wiping a branch
+* restoring the current branch from backup
+
+If the lock file is detected the command must fail. The error message should
+explain that the specific branch is protected while ``gel watch`` is running
+and that the recommended procedure is to finalize the schema changes (``gel
+migration create`` + ``gel migrate --dev-mode``) and to stop ``gel watch``
+before proceeding.
+
+Importantly, it does not matter whether the ``gel`` command would trigger
+hooks (using project defaults) or specifies the instance directly and would
+bypass the hooks. As long as it affects a branch that is associated with a
+project instance with a lock file, that branch must not be altered.
+
+In general, the lock file can be used to determine if ``gel watch`` is running
+and whether it is safe to alter the schema via some different tool.
+
+Git Tooling
+-----------
+
+External tools are most likely to affect the schema files without necessarily
+affecting the underlying schema. The main focus here will be on ``git``,
+however we can later generalize some of this to other versioning tools.
+
+There are a couple of important ways in which ``git`` can change the schema
+declaration files: by changing git branches or by reverting or in any other
+way getting back to an earlier commit within the same git branch.
+
+Reverting is a fairly explicitly destructive operation so drastic changes to
+the schema by ``gel watch -m`` is acceptable. Backups can be used to guard
+against losing dev data.
+
+Changing a git branch, however, is not only a common practice, but also may
+involve updating the current gel branch. If we expect the gel branch to
+change, we should not let ``gel watch -m`` apply any of the schema changes to
+the old branch. This is difficult to prevent, though.
+
+We propose to record the current git branch when ``gel watch -m`` starts. Then
+any time ``gel watch -m`` is about to change the schema it must check that the
+git branch didn't change since it started. If the git branch change is
+detected, ``gel watch`` must terminate with an error suggesting that it
+detected a git branch change and must be restarted to make sure that it
+correctly maps the schema changes to the correct gel branch.
 
 
 Design Considerations
@@ -355,6 +466,33 @@ two scripts are running at the same time within the project. We can add
 be executed one at a time. Note that if there are long-running scripts the may
 be a significant delay between the triggering event and the actual script
 execution if ``--serial`` mode is enabled.
+
+Watch Improvements
+------------------
+
+Potentially ``gel`` CLI tools can be a lot more pro-active in verifying the
+owner of the lock file and allow operations to succeed if the lock is stale.
+The lock then is either removed or renewed depending on the specific command.
+
+Ideally, we'd like to have a more robust connection between git branches and
+gel branches (via git hooks). As long as we have our hooks, we no longer need
+to stop ``gel watch`` after git branch changes (and we would allow ``gel
+branch switch`` to work, since presumably that's what the hook does).
+
+As stated any git branch change followed by editing and saving the schema will
+cause ``gel watch`` to error out. This is suboptimal for the many cases where
+the branch change was for a feature that didn't alter the schema and the
+schema change happens organically later. Since we know both the original git
+branch and the current one, we can check the ``dbschema`` diff between the
+branches to see if ``gel watch -m`` is reacting to the result of the branch
+change or to an unrelated edit. We might want to allow unrelated edits.
+
+Technically, any version control tool other than git that has some analogue of
+branches could emulate the specified behavior of stopping ``gel watch -m``
+after branch changes. The ``migration.apply.before``hook could be used to
+validate that the branch didn't change from the time when ``gel watch -m`` was
+started if the branch info is recorded at start time (presumably by a user
+script).
 
 
 Rejected Ideas
