@@ -166,15 +166,15 @@ limit access to certain functions, such as ``sys::reset_query_stats`` and
 ``net::http::schedule_request``.
 
 To provide access control to functions, we introduce a new function metadata
-field named ``require_permission``. It adds the provided permission to the list
+field named ``required_permissions``. It adds the provided permissions to the list
 of required permissions of the query, similar to how `DDL` and other existing
-capabilities work.
+capabilities work. It can take one or multiple permissions.
 
 code::
 
     CREATE FUNCTION sys::reset_query_stats(...) -> ... {
         SET volatility := ...
-        SET require_permission := sys::perm::query_stats;
+        SET required_permissions := sys::perm::query_stats;
         USING SQL FUNCTION ...;
     };
 
