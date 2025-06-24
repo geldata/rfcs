@@ -193,7 +193,7 @@ matching some of the protocol capabilities:
 
 - ``sys::perm::data_modifiction`` is required for ``insert``, ``delete`` and
   ``update`` EdgeQL queries.
-- ``sys::perm::ddl`` is required for performing DDL
+- ``sys::perm::ddl`` is required for performing DDL, but does not grant permission for "global" DDL like creating roles or branches (which require SUPERUSER).
 - ``sys::perm::branch_config`` is required for altering branch config. (Only superusers can alter instance config, since that includes auth anyway.)
 
 - ``sys::perm::query_stats`` is required to access ``sys::QueryStats`` and associated
