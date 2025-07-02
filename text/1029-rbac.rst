@@ -65,9 +65,11 @@ Proposal
 Non-superuser roles
 -------------------
 
-We allow creating roles that are not marked as ``SUPERUSER``. These roles are
-not allowed to use any commands apart from querying, transaction commands,
-and certain ``CONFIGURE SESSION`` commands.
+We allow creating roles that are not marked as ``SUPERUSER``. These
+roles are not allowed to use any commands apart from querying
+(non-DDL), SQL queries (non-DDL and non-config), transaction commands,
+and certain ``CONFIGURE SESSION`` commands. Various permissions allow
+expanding this.
 
 Permissions
 -----------
@@ -240,6 +242,24 @@ Requires ``cfg::perm::configure_allow_user_specified_id``
 The configuration will be done with annotations on Config objects,
 like everything else with the config system.
 
+Data branch restriction
+-----------------------
+
+Roles are also extended with a ``branches`` field, enumerating the branches
+that the role is allowed to connect to. The default value is ``{ '*' }``,
+signifying all branches.
+
+With the right permissions granted (
+``sys::perm::data_modifiction``, ``sys::perm::ddl``,
+``sys::perm::branch_config``), this allows a user to be granted substantial
+control over a subset of all branches without being able to make changes
+elsewhere.
+
+(It is actually basically already possible to accomplish this, but
+only when using JWT based authentication with scopes.)
+
+The branches field is *not* inherited in any way.
+
 
 Future work
 ===========
@@ -325,6 +345,16 @@ and functions (e.g. ``sys::QueryStats``). If we hard-coded role names into
 access policies of such objects, users would be required to have roles with
 those names and would not be able to grant or revoke access of different roles
 to said objects.
+
+Per-branch permissions
+----------------------
+
+In some cases, it would be nice to be able to grant a user different
+permissions on different branches. Maybe DDL on a dev branch but not on
+a staging branch, or some such.
+
+We are skipping it for simplicitly, and the workaround is making
+multiple roles instead for those cases.
 
 
 Introduce a function instead of global
