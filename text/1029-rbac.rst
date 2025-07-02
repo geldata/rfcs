@@ -252,7 +252,8 @@ signifying all branches.
 With the right permissions granted (
 ``sys::perm::data_modifiction``, ``sys::perm::ddl``,
 ``sys::perm::branch_config``), this allows a user to be granted substantial
-control over a single branch without being able to make changes elsewhere.
+control over a subset of all branches without being able to make changes
+elsewhere.
 
 (It is actually basically already possible to accomplish this, but
 only when using JWT based authentication with scopes.)
