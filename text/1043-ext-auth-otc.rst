@@ -29,7 +29,7 @@ This forces users to ensure they open the link on the same device where they sta
 Multi-factor authentication
 ---------------------------
 
-You might want to trigger a one-time code authentication flow as part of a multi-factor authentication flow. For example, you might want to send a code to a user's email as part of a two-factor authentication flow, or securing a sensitive action. This would be implemented by the developer as having /both/ a primary factor (like Email+Password or OAuth), and a secondary factor (like Magic Link with code verification).
+You might want to trigger a one-time code authentication flow as part of a multi-factor authentication flow. For example, you might want to send a code to a user's email as part of a two-factor authentication flow, or securing a sensitive action. This would be implemented by the developer as having /both/ a primary factor (like Email+Password or OAuth), and a secondary factor (like Magic Link or WebAuthn with code verification).
 
 .. code-block:: esdl
 
@@ -50,7 +50,7 @@ You might want to trigger a one-time code authentication flow as part of a multi
 Invite codes
 ------------
 
-You might have an authentication setup where an admin user will invite other users to join a team or organization. This would be implemented by the developer as having /both/ a primary factor (like Email+Password or OAuth), and a secondary factor (like Magic Link with code verification), but the admin would only set up the secondary factor and when the user accepts the invite, they link a primary factor to the same user.
+You might have an authentication setup where an admin user will invite other users to join a team or organization. This would be implemented by the developer as having /both/ a primary factor (like Email+Password or OAuth), and a secondary factor (like Magic Link or WebAuthn with code verification), but the admin would only set up the secondary factor and when the user accepts the invite, they link a primary factor to the same user.
 
 .. code-block:: esdl
 
@@ -82,7 +82,7 @@ And some pseudo-code:
 High-Level Proposal
 ===================
 
-We will introduce a new method for email+password email verification and magic link called ``Code``. This will be a configurable alternative to the existing ``Link`` method.
+We will introduce a new method for email+password email verification, magic link, and WebAuthn called ``Code``. This will be a configurable alternative to the existing ``Link`` method.
 
 The core of this proposal is to **decouple the PKCE session from the authentication initiation step**. When the ``Code`` method is enabled:
 
@@ -128,17 +128,30 @@ And for the magic link provider, we will add a new property to the provider conf
         };
     };
 
+And for the WebAuthn provider, we will add a new property to the provider config to allow the developer to select the verification method.
+
+.. code-block:: esdl
+
+    create type ext::auth::WebAuthnProviderConfig
+        extending ext::auth::ProviderConfig {
+        # ... existing properties ...
+
+        create required property verification_method: ext::auth::VerificationMethod {
+            set default := ext::auth::VerificationMethod.Link;
+        };
+    };
+
 The default value will be ``Link`` to ensure full backwards compatibility.
 
 Schema
 ------
 
-To manage the state of an in-progress OTC authentication, a new transient type will be introduced.
+To manage the state of an in-progress OTC authentication and track authentication attempts, two new types will be introduced.
 
 .. code-block:: esdl
 
     create type ext::auth::OneTimeCode {
-        create required property code_hash: std::str {
+        create required property code_hash: std::bytes {
             create constraint exclusive;
             create annotation std::description :=
                 "The securely hashed one-time code.";
@@ -151,12 +164,27 @@ To manage the state of an in-progress OTC authentication, a new transient type w
         create required link factor: ext::auth::Factor {
             on target delete delete source;
         };
+    };
 
-        create property max_attempts: int16 {
-            default := 5;
+    create scalar type ext::auth::AuthenticationAttemptType extending std::enum<
+        SignIn,
+        EmailVerification,
+        PasswordReset,
+        MagicLink,
+        OneTimeCode
+    >;
+
+    create type ext::auth::AuthenticationAttempt extending ext::auth::Auditable {
+        create required link factor: ext::auth::Factor {
+            on target delete delete source;
         };
-        create property attempts: int16 {
-            default := 0;
+        create required property attempt_type: ext::auth::AuthenticationAttemptType {
+            create annotation std::description :=
+                "The type of authentication attempt being made.";
+        };
+        create required property successful: std::bool {
+            create annotation std::description :=
+                "Whether this authentication attempt was successful.";
         };
     };
 
