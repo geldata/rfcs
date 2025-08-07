@@ -190,21 +190,40 @@ client.
 Built-in permissions
 --------------------
 
-There is a collection of capabilities for built-in language features,
+There is a collection of permissions for built-in language features,
 matching some of the protocol capabilities:
 
 - ``sys::perm::data_modifiction`` is required for ``insert``, ``delete`` and
   ``update`` EdgeQL queries.
-- ``sys::perm::ddl`` is required for performing DDL, but does not grant permission for "global" DDL like creating roles or branches (which require SUPERUSER).
-- ``sys::perm::branch_config`` is required for altering branch config. (Only superusers can alter instance config, since that includes auth anyway.)
+- ``sys::perm::ddl`` is required for performing DDL. It also grants read access
+  to ``schema::Migration`` and access to the ``std::sequence_reset`` function.
+- ``sys::perm::branch_config`` is required for altering branch config.
+- ``sys::perm::analyze`` is required for running ``ANALYZE`` commands
 
-- ``sys::perm::query_stats`` is required to access ``sys::QueryStats`` and associated
-  functions.
+Some built-in permissions are needed for certain standard library
+objects and functions:
+- ``sys::perm::query_stats_read`` is required for
+  read access to ``sys::QueryStats``
+- ``sys::perm::approximate_count`` is required for access to
+  the function ``sys::approximate_count``
 
 
-.. TODO: EXPLAIN, DESCRIBE, ADMINISTER??
+Some language features are restricted to superusers and cannot be granted:
+- Global DDL (eg. creating roles or branches)
+- Instance config, including auth config.
+- Administer
+- Describe
+- Explain
+- dump
+- restore
 
-.. TODO: add more caps for issuing net requests
+Superusers are given a special permission (``sys::perm::superuser``) which
+grants:
+- read access to ``sys::Role``
+- access to associated functions:
+    - ``sys::reset_query_stats``
+    - ``sys::_describe_roles_as_ddl``
+    - ``sys::_get_all_role_memberships``
 
 
 Session configuration permissions
@@ -238,9 +257,57 @@ Requires ``cfg::perm::configure_allow_user_specified_id``
 
 - allow_user_specified_id
 
-
 The configuration will be done with annotations on Config objects,
 like everything else with the config system.
+
+Configuration when using SQL via the ``set_config`` function requires
+``sys::perm::sql_session_config``.
+
+
+Network module permissions
+##########################
+
+The http module has new permissions:
+- ``std::net::perm::http_read`` grants:
+    - read access to ``std::net::http::Response``
+    - read access to ``std::net::http::ScheduledRequest``
+- ``std::net::perm::http_write`` grants:
+    - write access to ``std::net::http::Response``
+    - write access to ``std::net::http::ScheduledRequest``
+    - access to the function ``std::net::http::schedule_request``
+
+
+Auth extension permissions
+##########################
+
+The auth extension has new permissions:
+- ``ext::auth::perm::auth_read`` grants:
+    - read access to ``ext::auth::Auditable``, which is the base type for all
+      non-config auth objects including identities and factors.
+    - access to the functions:
+        - ``ext::auth::webhook_signing_key_exists``
+        - ``ext::auth::signing_key_exists``
+        - ``ext::auth::_jwt_check_signature``
+        - ``ext::auth::_jwt_parse``
+        - ``ext::auth::_jwt_verify``
+- ``ext::auth::perm::auth_write`` grants:
+    - write access to ``ext::auth::Auditable``.
+
+
+AI extension permissions
+########################
+
+The ai extension has new permissions:
+- ``ext::ai::perm::provider_call`` grants:
+    - access to the function ``ext::ai::search`` for str queries. This function
+      makes a call to AI providers.
+- ``ext::ai::perm::chat_prompt_read`` grants:
+    - read access to ``ext::ai::ChatPromptMessage``
+    - read access to ``ext::ai::ChatPrompt``
+- ``ext::ai::perm::chat_prompt_write`` grants:
+    - write access to ``ext::ai::ChatPromptMessage``
+    - write access to ``ext::ai::ChatPrompt``
+
 
 Data branch restriction
 -----------------------
@@ -259,6 +326,27 @@ elsewhere.
 only when using JWT based authentication with scopes.)
 
 The branches field is *not* inherited in any way.
+
+
+Postgres Access Policy Changes
+------------------------------
+
+Previously, the default value for ``apply_access_policies_pg`` was false, to
+compensate for access policies not being fully implemented in SQL. Now that they
+are fully implemented, the default value is changed to true.
+
+However, some 3rd party applications (such as fivetran) want access policies
+disabled but cannot configure their own connection. To compensate for this,
+a ``apply_access_policies_pg_default`` property is added to ``sys::Role`` which
+overrides any other configuration.
+
+
+Global current_role
+-------------------
+
+A global ``sys::current_role`` provides the name of the current role. This is
+not used for any built in RBAC functionality. However, this can be used to
+restrict parts of a schema to a single specific role.
 
 
 Future work
@@ -298,6 +386,11 @@ Schema just extists and anyone who is ``SUPERUSER`` is allowed to modify it.
 There are use-cases (and designs in other RBAC implementations) for each object
 to have an owner, who has exclusive modification permissions over that object.
 
+Another use case for ownership is a logging object which is inserted
+whenever a function is called. Currently, to call such a function requires
+insert access on the logging type. Ideally, a user could be granted access to
+just the function, which then executes its contents as if its owner called it.
+
 Because exact design and interaction with inheritance is unclear, this idea is
 left to be explored in the future.
 
@@ -320,6 +413,14 @@ This can be implemented by adding a "security" field which would be an enum of
 declared with ``security := Definer`` to effectively run in superuser context.
 
 
+Per Role/Per Branch Configuration
+---------------------------------
+
+The ``apply_access_policies_pg_default`` property was added as a quick way to
+override configurations for specific roles. This should be expanded to cover
+configuration in general.
+
+
 Rejected ideas
 ==============
 
@@ -334,17 +435,6 @@ This idea was rejected because we already have a mechanism for access control
 on object types and we don't want feature duplication. Access policies also
 allow differentiation between reads and writes of objects.
 
-Provide sys::current_role instead of permissions
-------------------------------------------------
-
-Instead of ``sys::current_permissions`` we introduce ``sys::current_role``.
-It would remove an indirection and make RBAC simpler.
-
-This idea was rejected because we want to limit access to std lib object types
-and functions (e.g. ``sys::QueryStats``). If we hard-coded role names into
-access policies of such objects, users would be required to have roles with
-those names and would not be able to grant or revoke access of different roles
-to said objects.
 
 Per-branch permissions
 ----------------------
