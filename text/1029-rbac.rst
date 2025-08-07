@@ -198,6 +198,15 @@ matching some of the protocol capabilities:
 - ``sys::perm::ddl`` is required for performing DDL. It also grants read access
   to ``schema::Migration`` and access to the ``std::sequence_reset`` function.
 - ``sys::perm::branch_config`` is required for altering branch config.
+- ``sys::perm::analyze`` is required for running ``ANALYZE`` commands
+
+Some built-in permissions are needed for certain standard library
+objects and functions:
+- ``sys::perm::query_stats_read`` is required for
+  read access to ``sys::QueryStats``
+- ``sys::perm::approximate_count`` is required for access to
+  the function ``sys::approximate_count``
+
 
 Some language features are restricted to superusers and cannot be granted:
 - Global DDL (eg. creating roles or branches)
@@ -211,12 +220,10 @@ Some language features are restricted to superusers and cannot be granted:
 Superusers are given a special permission (``sys::perm::superuser``) which
 grants:
 - read access to ``sys::Role``
-- read access to ``sys::QueryStats``
 - access to associated functions:
     - ``sys::reset_query_stats``
     - ``sys::_describe_roles_as_ddl``
     - ``sys::_get_all_role_memberships``
-- access to the function ``sys::approximate_count``
 
 
 Session configuration permissions
