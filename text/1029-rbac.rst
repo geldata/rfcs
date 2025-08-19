@@ -202,6 +202,7 @@ matching some of the protocol capabilities:
 
 Some built-in permissions are needed for certain standard library
 objects and functions:
+
 - ``sys::perm::query_stats_read`` is required for
   read access to ``sys::QueryStats``
 - ``sys::perm::approximate_count`` is required for access to
@@ -209,6 +210,7 @@ objects and functions:
 
 
 Some language features are restricted to superusers and cannot be granted:
+
 - Global DDL (eg. creating roles or branches)
 - Instance config, including auth config.
 - Administer
@@ -219,8 +221,10 @@ Some language features are restricted to superusers and cannot be granted:
 
 Superusers are given a special permission (``sys::perm::superuser``) which
 grants:
+
 - read access to ``sys::Role``
 - access to associated functions:
+
     - ``sys::reset_query_stats``
     - ``sys::_describe_roles_as_ddl``
     - ``sys::_get_all_role_memberships``
@@ -268,10 +272,13 @@ Network module permissions
 ##########################
 
 The http module has new permissions:
+
 - ``std::net::perm::http_read`` grants:
+
     - read access to ``std::net::http::Response``
     - read access to ``std::net::http::ScheduledRequest``
 - ``std::net::perm::http_write`` grants:
+
     - write access to ``std::net::http::Response``
     - write access to ``std::net::http::ScheduledRequest``
     - access to the function ``std::net::http::schedule_request``
@@ -281,16 +288,21 @@ Auth extension permissions
 ##########################
 
 The auth extension has new permissions:
+
 - ``ext::auth::perm::auth_read`` grants:
+
     - read access to ``ext::auth::Auditable``, which is the base type for all
       non-config auth objects including identities and factors.
     - access to the functions:
+
         - ``ext::auth::webhook_signing_key_exists``
         - ``ext::auth::signing_key_exists``
         - ``ext::auth::_jwt_check_signature``
         - ``ext::auth::_jwt_parse``
         - ``ext::auth::_jwt_verify``
+
 - ``ext::auth::perm::auth_write`` grants:
+
     - write access to ``ext::auth::Auditable``.
 
 
@@ -298,13 +310,19 @@ AI extension permissions
 ########################
 
 The ai extension has new permissions:
+
 - ``ext::ai::perm::provider_call`` grants:
+
     - access to the function ``ext::ai::search`` for str queries. This function
       makes a call to AI providers.
+
 - ``ext::ai::perm::chat_prompt_read`` grants:
+
     - read access to ``ext::ai::ChatPromptMessage``
     - read access to ``ext::ai::ChatPrompt``
+
 - ``ext::ai::perm::chat_prompt_write`` grants:
+
     - write access to ``ext::ai::ChatPromptMessage``
     - write access to ``ext::ai::ChatPrompt``
 
