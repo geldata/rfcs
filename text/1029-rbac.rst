@@ -297,9 +297,13 @@ The auth extension has new permissions:
 
         - ``ext::auth::webhook_signing_key_exists``
         - ``ext::auth::signing_key_exists``
-        - ``ext::auth::_jwt_check_signature``
-        - ``ext::auth::_jwt_parse``
-        - ``ext::auth::_jwt_verify``
+
+- ``ext::auth::perm::auth_read_user`` grants:
+
+    - read access to the ``ext::auth::Identity``, restricted to the
+      current value of ``ext::auth::ClientTokenIdentity``.
+      (This is a *subset* of what is granted by
+
 
 - ``ext::auth::perm::auth_write`` grants:
 
