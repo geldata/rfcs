@@ -1,0 +1,239 @@
+::
+
+    Status: Draft
+    Type: Feature
+    Created: 2024-05-30
+    Authors: Victor Petrovykh <victor@edgedb.com>
+
+
+=======================================
+RFC 1027: Geometric and Geographic data
+=======================================
+
+Abstract
+========
+
+We can provide support for geometric and geographic data by using PostGIS
+extension.
+
+
+Motivation
+==========
+
+A lot of the applications need to interact with large or small scale geography
+and would benefit from storing some geometric or geographic data. Postgres has
+the PostGIS extension for this purpose, which we can expose in EdgeDB.
+
+
+Overview
+========
+
+PostGIS uses two main types to store the data ``geometry`` and ``geography``.
+Both of these are abstract types for all kinds of spacial types. The main
+difference between these is that ``geometry`` uses a flat Cartesian coordinate
+system whereas ``geography`` uses spherical coordinates.
+
+There are two additional "helper" types that appear in some functions (as
+inputs or outputs): ``box2d`` and ``box3d``. They are defining bounding boxes.
+
+The basic elements from which spacial data is built are:
+
+- Point (from 2 to 4 dimensions).
+
+  E.g. ``POINT (1 2)``
+
+- Line string that is a sequence of points defining contiguous segmented line
+  which does not self-intersect.
+
+  E.g. ``LINESTRING (1 2, 3 4, 5 6)``
+
+- Polygon which describes a planar region bounded by a closed line string.
+  Additionally it can have a number of holes also defined by closed line
+  strings.
+
+  E.g. ``POLYGON ((0 0,4 0,4 4,0 4,0 0),(1 1,2 1,2 2,1 2,1 1))``
+
+- Circular string that is defined by arc segments. Each arc segment needs
+  start and end points as well as one point somewhere in between on that arc.
+  Circles are defined by giving the same start and end point and the middle
+  point is the diametrically opposite one.
+
+  E.g. ``CIRCULARSTRING(0 0, 1 1, 1 0)``
+
+- Compound curve that is made of a combination of arcs and linear segments. In
+  order to be contiguous the end points of the components must match.
+
+  E.g. ``COMPOUNDCURVE( CIRCULARSTRING(0 0, 1 1, 1 0),(1 0, 0 1))``
+
+- Curve polygon is defined just like a regular polygon using closed lines. The
+  boundary and holes can be defined using ``LINESTRING``, ``CIRCULARSTRING``,
+  and ``COMPOUNDCURVE``, though.
+
+  .. code-block::
+
+    CURVEPOLYGON(
+      CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0),
+      (1 1, 3 3, 3 1, 1 1) )
+
+All of these basic types are contiguous and describe some basic shapes. They
+can be combined into non-contiguous shapes by using a number of collection
+types:
+
+- Multi point representing a set of points.
+
+  E.g. ``MULTIPOINT ( (0 0), (1 2) )``
+
+- Multi line string representing a set of line strings.
+
+  E.g. ``MULTILINESTRING ( (0 0,1 1,1 2), (2 3,3 2,5 4) )``
+
+- Multi polygon representing a set of polygons.
+
+  E.g. ``MULTIPOLYGON (((1 5, 5 5, 5 1, 1 1, 1 5)), ((6 5, 9 1, 6 1, 6 5)))``
+
+- Multi curve representing a set of ``LINESTRING``, ``CIRCULARSTRING``, and
+  ``COMPOUNDCURVE``.
+
+  E.g. ``MULTICURVE( (0 0, 5 5), CIRCULARSTRING(4 0, 4 4, 8 4))``
+
+- Multi surface representing a set of ``POLYGON`` and ``CURVEPOLYGON`` values.
+
+Finally the most generic collection is simply *geometry collection*, which can
+contain any of the spacial types (including other geometry collections).
+
+E.g. ``GEOMETRYCOLLECTION ( POINT(2 3), LINESTRING(2 3, 3 4))``
+
+There are also a few more specialized types:
+
+- Polyhedral surface is a *contiguous* collection of polygons. So the polygons
+  must share edges.
+
+  .. code-block::
+
+    POLYHEDRALSURFACE Z (
+      ((0 0 0, 0 0 1, 0 1 1, 0 1 0, 0 0 0)),
+      ((0 0 0, 0 1 0, 1 1 0, 1 0 0, 0 0 0)),
+      ((0 0 0, 1 0 0, 1 0 1, 0 0 1, 0 0 0)),
+      ((1 1 0, 1 1 1, 1 0 1, 1 0 0, 1 1 0)),
+      ((0 1 0, 0 1 1, 1 1 1, 1 1 0, 0 1 0)),
+      ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)) )
+
+- Triangle is a special closed polygon. It consists of 4 points. The points
+  must not be on the same line. First and last points must be identical.
+
+  E.g. ``TRIANGLE ((0 0, 0 9, 9 0, 0 0))``
+
+- TIN (Triangulated Irregular Network) is a collection of non-overlapping
+  triangles.
+
+  .. code-block::
+
+    TIN Z ( ((0 0 0, 0 0 1, 0 1 0, 0 0 0)), ((0 0 0, 0 1 0, 1 1 0, 0 0 0)) )
+
+From these types the ``geometry`` and ``geography`` values can be built up. In
+addition to the spacial data an SRID can be provided to determine the specific
+reference system being used (essentially giving concrete meaning to the
+coordinates). The default SRID for ``geometry`` is 0, which is plain Cartesian
+coordinates. The default SRID for ``geography`` is 4326 which uses longitude
+and latitude as coordinates.
+
+Bounding boxes only need two points (on the longest diagonal) to be defined.
+They are assumed to be aligned with the coordinate grid. Thus ``BOX(0 0, 2
+1)`` defines a 2D rectangle and ``BOX3D(0 0 0, 1 2 3)`` defines a rectangular
+box.
+
+
+Proposed type hierarchy
+=======================
+
+We need to introduce four basic scalar types: ``geometry``, ``geography``,
+``box2d``, and ``box3d``. The ``geometry`` and ``geography`` types will have
+internal subtypes much like ``json`` does, in a way that is largely opaque to
+the type system, but can be checked via helper functions.
+
+.. code-block:: edgeql
+
+  create scalar type ext::postgis::geometry extending std::anyscalar {
+      set sql_type := "geometry";
+  };
+
+  create scalar type ext::postgis::geography extending std::anyscalar {
+      set sql_type := "geography";
+  };
+
+  create scalar type ext::postgis::box2d extending std::anyscalar {
+      set sql_type := "box2d";
+  };
+
+  create scalar type ext::postgis::box3d extending std::anyscalar {
+      set sql_type := "box3d";
+  };
+
+We will use ``str`` casts as a primary way to define new literals:
+
+.. code-block:: edgeql
+
+  select <geometry>'LINESTRING(0 1, 2 3)';
+  select <geography>'SRID=4267;POINT(1 2)';
+  select <box2d>'BOX(0 1, 2 3)';
+  select <box3d>'BOX3D(0 0 0, 1 2 3)';
+
+
+Functions
+=========
+
+We will largely expose functions defined in the PostGIS extension
+automatically as much as possible as there are 500+ functions and helpers. As
+part of this we will expose operators by using their underlying function names
+with a ``op_`` prefix to make it easy to distinguish at a glance.
+
+The overall naming strategy is to keep original names as much as possible, but
+drop the ``st_`` prefix as we already have them in their own extension
+namespace.
+
+
+Alternative proposal
+====================
+
+We can also use collection types to group points into other configurations and
+build out the type system that way. This may be a natural way of
+conceptualizing the various spacial types, but it will require additional
+features. We need a way to declare collection types like our arrays and tuples
+so that we can apply that to these custom collections in extensions. And we
+will also likely need pseudotypes to refer to categories of these collections
+(such as ``POLYGON`` and ``CURVEPOLYGON``) as we cannot group them in the type
+system otherwise.
+
+
+Rejected ideas
+==============
+
+We discard the idea of specifying types for every ``geometry`` and
+``geography`` subtype. The type system in Postgres treats these more like it
+treats JSON. The types are mostly opaque, but their internal subtypes can be
+checked at runtime. Although columns can be specified to be of a specific
+subtype, it is still a check that can be done via special helper functions.
+
+This is unnecessarily complicated:
+
+.. code-block:: edgeql
+
+  CREATE ABSTRACT SCALAR TYPE gis::anygeo EXTENDING std::anyscalar;
+  CREATE SCALAR TYPE gis::point EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::pointz EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::pointzm EXTENDING gis::anygeo;
+  CREATE ABSTRACT SCALAR TYPE gis::anycurve EXTENDING gis::anygeo;
+  CREATE ABSTRACT SCALAR TYPE gis::basiccurve EXTENDING gis::anycurve;
+  CREATE SCALAR TYPE gis::linestring EXTENDING gis::basiccurve;
+  CREATE SCALAR TYPE gis::circularstring EXTENDING gis::basiccurve;
+  CREATE SCALAR TYPE gis::compoundcurve EXTENDING gis::anycurve;
+  CREATE ABSTRACT SCALAR TYPE gis::anypolygon EXTENDING std::anyscalar;
+  CREATE SCALAR TYPE gis::polygon EXTENDING gis::anypolygon;
+  CREATE SCALAR TYPE gis::curvepolygon EXTENDING gis::anypolygon;
+  CREATE SCALAR TYPE gis::multipoint EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::multilinestring EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::multipolygon EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::multicurve EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::geocollection EXTENDING gis::anygeo;
+  CREATE SCALAR TYPE gis::geometry EXTENDING std::anyscalar;
+  CREATE SCALAR TYPE gis::geography EXTENDING std::anyscalar;
